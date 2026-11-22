@@ -45,7 +45,7 @@ export const Affine2D = {
   }
 };
 
-// AABB & Math.sqrt Kullanmayan Narrow-Phase Çarpışma Motoru
+// AABB & Math.sqrt Kullanmayan Narrow-Phase Çarpışma ve Kısmi Segment Bölme Motoru
 export const CollisionEngine = {
   computeBBox(pts, pad = 4) {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -127,6 +127,56 @@ export const CollisionEngine = {
     return false;
   },
 
+  // Kısmi Silgi: Çizgiyi daire ile kesişen noktalardan bölerek kalan parçaları döndürür
+  splitStrokeByCircle(stroke, cx, cy, radius) {
+    const rSq = radius * radius;
+    const pts = stroke.points;
+    const chunks = [];
+    let currentChunk = [];
+
+    for (let i = 0; i < pts.length; i += 3) {
+      const x = pts[i], y = pts[i + 1], p = pts[i + 2];
+      const dx = x - cx, dy = y - cy;
+      const insidePoint = dx * dx + dy * dy <= rSq;
+
+      let segmentCut = false;
+      if (i > 0) {
+        const px = pts[i - 3], py = pts[i - 2];
+        if (this.pointToSegmentDistSq(cx, cy, px, py, x, y) <= rSq) {
+          segmentCut = true;
+        }
+      }
+
+      if (insidePoint || segmentCut) {
+        if (currentChunk.length >= 6) {
+          chunks.push(new Float32Array(currentChunk));
+        }
+        currentChunk = [];
+        if (!insidePoint) {
+          currentChunk.push(x, y, p);
+        }
+      } else {
+        currentChunk.push(x, y, p);
+      }
+    }
+
+    if (currentChunk.length >= 6) {
+      chunks.push(new Float32Array(currentChunk));
+    }
+
+    return chunks.map((f32) => ({
+      id: `st_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      tool: stroke.tool,
+      color: stroke.color,
+      width: stroke.width,
+      opacity: stroke.opacity,
+      lineCap: stroke.lineCap || "round",
+      points: f32,
+      bbox: this.computeBBox(f32, stroke.width * 1.5),
+      deleted: false
+    }));
+  },
+
   strokeInsidePolygon(stroke, poly, polyBBox) {
     if (!this.aabbOverlap(stroke.bbox, polyBBox)) return false;
     const pts = stroke.points;
@@ -160,17 +210,26 @@ export class AddStrokesCommand {
   }
 }
 
-export class EraseStrokesCommand {
-  constructor(page, strokes) {
+export class SplitOrEraseCommand {
+  constructor(page, removedStrokes, addedStrokes = []) {
     this.page = page;
-    this.strokes = strokes;
-    this.dirtyBBox = CollisionEngine.mergeBBoxes(strokes.map((s) => s.bbox));
+    this.removedStrokes = removedStrokes;
+    this.addedStrokes = addedStrokes;
+    this.dirtyBBox = CollisionEngine.mergeBBoxes([
+      ...removedStrokes.map((s) => s.bbox),
+      ...addedStrokes.map((s) => s.bbox)
+    ]);
   }
   execute() {
-    for (const s of this.strokes) s.deleted = true;
+    for (const s of this.removedStrokes) s.deleted = true;
+    for (const s of this.addedStrokes) {
+      s.deleted = false;
+      if (!this.page.strokes.includes(s)) this.page.strokes.push(s);
+    }
   }
   undo() {
-    for (const s of this.strokes) s.deleted = false;
+    for (const s of this.addedStrokes) s.deleted = true;
+    for (const s of this.removedStrokes) s.deleted = false;
   }
   permanentlyRemove() {
     this.page.strokes = this.page.strokes.filter((s) => !s.deleted);
@@ -298,7 +357,6 @@ export class TouchGestureRecognizer {
     this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     this.maxFingers = Math.max(this.maxFingers, this.pointers.size);
 
-    // Parmak sayısı değiştiğinde zıplamayı önlemek için çapaları sıfırla
     const { cx, cy, dist } = this._getCentroidAndDist();
     if (this.pointers.size === 1) this.startCentroid = { x: cx, y: cy };
     this.anchorCentroid = { x: cx, y: cy };
@@ -371,7 +429,7 @@ export class SelectionGizmo {
     this.hw = 0;
     this.hh = 0;
     this.angle = 0;
-    this.dragMode = null; // 'move' | 'rotate' | 'scale-0..3'
+    this.dragMode = null;
     this.startPointer = { x: 0, y: 0 };
     this.accumMatrix = Affine2D.identity();
   }
@@ -445,7 +503,6 @@ export class SelectionGizmo {
     ctx.strokeRect(-this.hw, -this.hh, this.hw * 2, this.hh * 2);
     ctx.setLineDash([]);
 
-    // Üst döndürme tutamacı
     const rotY = -this.hh - 28 / zoom;
     ctx.beginPath();
     ctx.moveTo(0, -this.hh);
@@ -462,7 +519,6 @@ export class SelectionGizmo {
     ctx.fill();
     ctx.stroke();
 
-    // 4 köşe tutamacı
     const corners = [
       [-this.hw, -this.hh],
       [this.hw, -this.hh],
@@ -492,7 +548,7 @@ export class CanvasEngine {
     onSelectionChange,
     onTextBoxRequest,
     onImageRequest,
-    onLaserActivity
+    onInfiniteExpand
   }) {
     this.viewportEl = viewportEl;
     this.worldEl = worldEl;
@@ -506,16 +562,16 @@ export class CanvasEngine {
     this.onSelectionChange = onSelectionChange;
     this.onTextBoxRequest = onTextBoxRequest;
     this.onImageRequest = onImageRequest;
-    this.onLaserActivity = onLaserActivity;
+    this.onInfiniteExpand = onInfiniteExpand;
 
-    this.pagesData = new Map(); // pageIndex -> { width, height, strokes, texts, images, stickyCards }
-    this.slots = new Map(); // pageIndex -> VirtualPDFEngine slot
+    this.pagesData = new Map();
+    this.slots = new Map();
     this.history = new HistoryManager(60);
     this.gizmo = new SelectionGizmo();
 
     this.tool = "ballpoint";
     this.prevToolBeforeSideBtn = null;
-    this.eraserMode = "partial"; // 'partial' | 'vector' | 'highlighter-only'
+    this.eraserMode = "partial";
     this.color = "#0f172a";
     this.size = 3.2;
 
@@ -531,7 +587,6 @@ export class CanvasEngine {
     this.activePageIndex = 0;
     this.lastWrittenLocation = { pageIndex: 0, x: 200, y: 200 };
 
-    // S Pen durumları
     this.isDrawing = false;
     this.penDown = false;
     this.lastPenLiftTime = 0;
@@ -562,7 +617,7 @@ export class CanvasEngine {
       case "a4-landscape":
         return { width: 1123, height: 794 };
       case "infinite":
-        return { width: 2400, height: 2400 };
+        return { width: 2200, height: 2200 };
       default:
         return { width: 794, height: 1123 };
     }
@@ -666,7 +721,6 @@ export class CanvasEngine {
     ctx.restore();
   }
 
-  // Dirty-Rect Destekli Sayfa Yeniden Çizimi
   redrawPage(pageIndex, dirtyBBox = null) {
     const slot = this.slots.get(pageIndex);
     const pd = this.pagesData.get(pageIndex);
@@ -692,17 +746,14 @@ export class CanvasEngine {
       ctx.clearRect(0, 0, pd.width, pd.height);
     }
 
-    // Görseller
     for (const imgItem of pd.images || []) {
       if (imgItem._el && imgItem._el.complete) {
         ctx.drawImage(imgItem._el, imgItem.x, imgItem.y, imgItem.w, imgItem.h);
       }
     }
 
-    // Vektör Çizgiler
     this.drawStrokesList(ctx, pd.strokes || [], dirtyBBox);
 
-    // Metin Kutuları
     for (const txt of pd.texts || []) {
       ctx.save();
       ctx.fillStyle = txt.color || "#0f172a";
@@ -749,13 +800,6 @@ export class CanvasEngine {
       return;
     }
 
-    if (st.tool === "pencil") {
-      ctx.globalAlpha = 0.78;
-      ctx.setLineDash([1.2, 0.8]);
-    } else {
-      ctx.globalAlpha = st.opacity ?? 1;
-    }
-
     ctx.strokeStyle = st.color;
     ctx.fillStyle = st.color;
 
@@ -766,6 +810,31 @@ export class CanvasEngine {
       ctx.restore();
       return;
     }
+
+    // Dokulu Kurşun Kalem Efekti
+    if (st.tool === "pencil") {
+      for (let i = 0; i < pts.length - 3; i += 3) {
+        const x0 = pts[i], y0 = pts[i + 1], p0 = pts[i + 2];
+        const x1 = pts[i + 3], y1 = pts[i + 4], p1 = pts[i + 5];
+        const pressure = (p0 + p1) * 0.5;
+        ctx.globalAlpha = Math.min(0.92, 0.38 + pressure * 0.55);
+        ctx.lineWidth = Math.max(0.7, st.width * (0.55 + pressure * 0.75));
+        ctx.beginPath();
+        ctx.moveTo(x0, y0);
+        ctx.lineTo(x1, y1);
+        ctx.stroke();
+
+        // Grafit doku tanecikleri
+        const grainX = (x0 + x1) * 0.5 + Math.sin(i * 1.7) * (st.width * 0.35);
+        const grainY = (y0 + y1) * 0.5 + Math.cos(i * 2.3) * (st.width * 0.35);
+        ctx.globalAlpha = 0.28;
+        ctx.fillRect(grainX, grainY, 1.1, 1.1);
+      }
+      ctx.restore();
+      return;
+    }
+
+    ctx.globalAlpha = st.opacity ?? 1;
 
     // Quadratic Bezier + Basınç Duyarlı Dinamik Kalınlık
     for (let i = 0; i < pts.length - 3; i += 3) {
@@ -867,7 +936,6 @@ export class CanvasEngine {
           const curA = Math.atan2(pt.y - this.gizmo.cy, pt.x - this.gizmo.cx);
           let nextAngle = this.gizmo.angle + (curA - prevA);
 
-          // 0°/90°/180°/270° açılarına 4° yaklaşınca manyetik hizalama
           const snapThresh = (4 * Math.PI) / 180;
           const cardinals = [0, Math.PI / 2, Math.PI, -Math.PI / 2, -Math.PI];
           for (const c of cardinals) {
@@ -898,6 +966,7 @@ export class CanvasEngine {
         }
         const afterBox = CollisionEngine.mergeBBoxes(this.gizmo.strokes.map((s) => s.bbox));
         this.redrawPage(this.gizmo.pageIndex, CollisionEngine.mergeBBoxes([beforeBox, afterBox]));
+        this.onSelectionChange(this.gizmo);
       },
       { capture: true }
     );
@@ -936,7 +1005,6 @@ export class CanvasEngine {
         return;
       }
 
-      // S Pen yan tuşu (e.buttons === 32 || e.button === 5) basılıyken geçici Silgi
       if (e.buttons === 32 || e.button === 5) {
         if (!this.prevToolBeforeSideBtn) this.prevToolBeforeSideBtn = this.tool;
         this.tool = "eraser";
@@ -961,16 +1029,14 @@ export class CanvasEngine {
         this._performEraseAt(pt.pageIndex, pt.x, pt.y);
       } else if (this.tool === "laser") {
         this.laserTrails.push({ pageIndex: pt.pageIndex, points: [{ x: pt.x, y: pt.y, t: performance.now() }] });
-        if (this.onLaserActivity) this.onLaserActivity();
       } else {
-        this._resetHoldToSnapTimer(pt.pageIndex);
+        this._resetHoldToSnapTimer();
       }
     });
 
     this.viewportEl.addEventListener("pointermove", (e) => {
       if (!this.isDrawing || e.pointerType === "touch") return;
 
-      // S Pen yan tuşu kontrolü
       if ((e.buttons & 32) === 32 && this.tool !== "eraser") {
         if (!this.prevToolBeforeSideBtn) this.prevToolBeforeSideBtn = this.tool;
         this.tool = "eraser";
@@ -1002,10 +1068,9 @@ export class CanvasEngine {
         const dist = prev ? Math.hypot(pt.x - prev.x, pt.y - prev.y) : 99;
         if (dist > 6) {
           this.snappedShapePoints = null;
-          this._resetHoldToSnapTimer(pt.pageIndex);
+          this._resetHoldToSnapTimer();
         }
 
-        // Dolma kalem hız duyarlılığı
         let adjP = pressure;
         if (this.tool === "fountain" && prev) {
           const dt = Math.max(1, performance.now() - prev.t);
@@ -1017,7 +1082,7 @@ export class CanvasEngine {
       }
     });
 
-    const finishStroke = (e) => {
+    const finishStroke = () => {
       if (!this.isDrawing) return;
       clearTimeout(this.holdTimer);
       this.isDrawing = false;
@@ -1056,7 +1121,22 @@ export class CanvasEngine {
 
         const cmd = new AddStrokesCommand(pd, [strokeObj]);
         this.history.push(cmd, false);
-        this.redrawPage(pageIndex, strokeObj.bbox);
+
+        // Sınırsız Tuval (Infinite Canvas) Otomatik Alan Genişletmesi
+        if (
+          this.paperSettings.layout === "infinite" &&
+          (strokeObj.bbox.maxX > pd.width - 140 || strokeObj.bbox.maxY > pd.height - 140) &&
+          this.onInfiniteExpand
+        ) {
+          this.onInfiniteExpand(
+            pageIndex,
+            Math.max(pd.width, Math.ceil(strokeObj.bbox.maxX + 700)),
+            Math.max(pd.height, Math.ceil(strokeObj.bbox.maxY + 700))
+          );
+        } else {
+          this.redrawPage(pageIndex, strokeObj.bbox);
+        }
+
         this.lastWrittenLocation = { pageIndex, x: finalPts[0].x, y: finalPts[0].y };
         this.onDirtyPage(pageIndex);
       }
@@ -1075,8 +1155,7 @@ export class CanvasEngine {
     this.viewportEl.addEventListener("pointercancel", finishStroke);
   }
 
-  // 500ms Hold-to-Snap Geometrik Şekil Tanıyıcı
-  _resetHoldToSnapTimer(pageIndex) {
+  _resetHoldToSnapTimer() {
     clearTimeout(this.holdTimer);
     this.holdTimer = setTimeout(() => {
       if (!this.isDrawing || this.rawPoints.length < 4) return;
@@ -1103,13 +1182,11 @@ export class CanvasEngine {
     const closeDist = Math.hypot(last.x - first.x, last.y - first.y);
     const p = 0.55;
 
-    // Fosforlu kalem düz satır hizalama
     if (tool === "highlighter") {
       const yMid = Math.abs(last.y - first.y) < 22 ? (first.y + last.y) * 0.5 : last.y;
       return [{ x: first.x, y: first.y, p }, { x: last.x, y: yMid, p }];
     }
 
-    // Kapalı Şekil (Daire, Üçgen, Dikdörtgen)
     if (closeDist < Math.max(26, totalLen * 0.18) && w > 18 && h > 18) {
       const simplified = rdpSimplify(pts, Math.max(w, h) * 0.09);
       const corners = simplified.length - 1;
@@ -1130,7 +1207,6 @@ export class CanvasEngine {
           { x: minX, y: minY, p }
         ];
       }
-      // Daire / Elips
       const cx = (minX + maxX) / 2;
       const cy = (minY + maxY) / 2;
       const rx = w / 2;
@@ -1143,7 +1219,6 @@ export class CanvasEngine {
       return circle;
     }
 
-    // Koordinat Ekseni (L şeklinde dik kesişim)
     const midIdx = Math.floor(pts.length * 0.5);
     const corner = pts[midIdx];
     const v1x = corner.x - first.x, v1y = corner.y - first.y;
@@ -1168,7 +1243,6 @@ export class CanvasEngine {
       }
     }
 
-    // Ok veya Düz Çizgi
     const endSegment = pts.slice(-Math.max(4, Math.floor(pts.length * 0.2)));
     const tip = endSegment[0];
     if (Math.hypot(last.x - tip.x, last.y - tip.y) > 12 && totalLen > closeDist * 1.15) {
@@ -1190,21 +1264,27 @@ export class CanvasEngine {
     const pd = this.pagesData.get(pageIndex);
     if (!pd) return;
 
-    const radius = this.eraserMode === "partial" ? 10 : 14;
+    const radius = this.eraserMode === "partial" ? 11 : 14;
     const probeBox = { minX: x - radius, minY: y - radius, maxX: x + radius, maxY: y + radius };
-    const hitStrokes = [];
+    const removedStrokes = [];
+    const addedStrokes = [];
 
     for (const st of pd.strokes) {
       if (st.deleted) continue;
       if (this.eraserMode === "highlighter-only" && st.tool !== "highlighter") continue;
       if (!CollisionEngine.aabbOverlap(st.bbox, probeBox)) continue;
+
       if (CollisionEngine.strokeHitsCircle(st, x, y, radius)) {
-        hitStrokes.push(st);
+        removedStrokes.push(st);
+        if (this.eraserMode === "partial" && st.points.length >= 9) {
+          const fragments = CollisionEngine.splitStrokeByCircle(st, x, y, radius);
+          addedStrokes.push(...fragments);
+        }
       }
     }
 
-    if (hitStrokes.length > 0) {
-      const cmd = new EraseStrokesCommand(pd, hitStrokes);
+    if (removedStrokes.length > 0) {
+      const cmd = new SplitOrEraseCommand(pd, removedStrokes, addedStrokes);
       this.history.push(cmd, false);
       this.redrawPage(pageIndex, cmd.dirtyBBox);
       this.onDirtyPage(pageIndex);
@@ -1234,7 +1314,6 @@ export class CanvasEngine {
     }
   }
 
-  // Canlı Önizleme, Lazer İzleri ve Gizmo Katmanı Döngüsü
   _startOverlayLoop() {
     const tick = () => {
       const rect = this.viewportEl.getBoundingClientRect();
@@ -1256,7 +1335,6 @@ export class CanvasEngine {
         ctx.translate(ox, oy);
         ctx.scale(this.zoom, this.zoom);
 
-        // Aktif çizim önizlemesi
         if (this.isDrawing && this.rawPoints.length > 0 && !["eraser", "lasso", "laser"].includes(this.tool)) {
           const previewPts = this.snappedShapePoints || this.rawPoints;
           const f32 = new Float32Array(previewPts.length * 3);
@@ -1274,7 +1352,6 @@ export class CanvasEngine {
           });
         }
 
-        // Kement çokgeni
         if (this.isDrawing && this.tool === "lasso" && this.lassoPoints.length > 1) {
           ctx.strokeStyle = "#2563eb";
           ctx.lineWidth = 1.6 / this.zoom;
@@ -1292,7 +1369,6 @@ export class CanvasEngine {
         ctx.restore();
       }
 
-      // Lazer İşaretçi (1.5 saniye sonra kaybolur)
       const now = performance.now();
       this.laserTrails = this.laserTrails.filter((tr) => {
         tr.points = tr.points.filter((p) => now - p.t < 1500);
@@ -1318,7 +1394,6 @@ export class CanvasEngine {
         ctx.restore();
       }
 
-      // SelectionGizmo Çizimi
       if (this.gizmo.active) {
         const gw = this.pagesLayerEl.querySelector(`.page-wrapper[data-page-index="${this.gizmo.pageIndex}"]`);
         if (gw) {
@@ -1337,7 +1412,7 @@ export class CanvasEngine {
   }
 
   applyWorldTransform() {
-    this.worldEl.style.transform = `translate(${this.panX}px, ${this.panY}px) scale(${this.zoom})`;
+    this.worldEl.style.transform = `translate3d(${this.panX}px, ${this.panY}px, 0) scale(${this.zoom})`;
     this.updateMinimap();
   }
 
@@ -1367,7 +1442,6 @@ export class CanvasEngine {
     }
     ctx.restore();
 
-    // Görünüm penceresi çerçevesi
     const wEl = this.pagesLayerEl.querySelector(`.page-wrapper[data-page-index="${this.activePageIndex}"]`);
     if (wEl) {
       const vr = this.viewportEl.getBoundingClientRect();
