@@ -13,6 +13,9 @@ import {
   renderMathInElementSafe
 } from "./ai-study.js";
 
+const SUBJECTS_STORAGE = "odaknot_subjects_v1";
+const PALETTE_STORAGE = "odaknot_palette_v1";
+
 function formatRelativeTime(timestamp) {
   if (!timestamp) return "Bugün";
   const diffDays = Math.floor((Date.now() - timestamp) / (1000 * 60 * 60 * 24));
@@ -26,7 +29,6 @@ function formatBytes(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-// Aynı Satırdaki Çakışan Metin Vurgu Dikdörtgenlerini Birleştir
 function mergeSameLineWorldRects(rects) {
   if (!rects || rects.length === 0) return [];
   const sorted = [...rects].sort((a, b) => a.y - b.y || a.x - b.x);
@@ -50,21 +52,60 @@ class OdakNotApp {
   constructor() {
     this.storage = new StorageManager();
     this.notebooks = [];
-    this.subjects = ["Genel", "Matematik", "Fizik"];
+    this.subjects = this._loadSubjects();
     this.activeNotebook = null;
     this.saveTimers = new Map();
     this.pendingTextInsertPt = null;
     this.pendingImageInsertPt = null;
 
-    // Odak Sayacı Durumu
     this.timerMinutes = 25;
     this.timerSecondsLeft = 25 * 60;
     this.timerInterval = null;
   }
 
+  _loadSubjects() {
+    try {
+      const raw = localStorage.getItem(SUBJECTS_STORAGE);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (_) {}
+    return ["Genel", "Matematik", "Fizik", "Mühendislik"];
+  }
+
+  _saveSubjects() {
+    localStorage.setItem(SUBJECTS_STORAGE, JSON.stringify(this.subjects));
+  }
+
+  _restorePalette() {
+    try {
+      const raw = localStorage.getItem(PALETTE_STORAGE);
+      if (!raw) return;
+      const colors = JSON.parse(raw);
+      const slots = document.querySelectorAll(".fav-color");
+      colors.forEach((c, idx) => {
+        if (slots[idx] && c) slots[idx].style.background = c;
+      });
+      if (colors[0]) this.canvasEngine.color = colors[0];
+    } catch (_) {}
+  }
+
+  _persistPalette() {
+    const colors = Array.from(document.querySelectorAll(".fav-color")).map(
+      (btn) => getComputedStyle(btn).backgroundColor
+    );
+    localStorage.setItem(PALETTE_STORAGE, JSON.stringify(colors));
+  }
+
   async init() {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("./sw.js").catch(() => {});
+    }
+
     await this.storage.init();
     this._initEngines();
+    this._restorePalette();
     this._bindUIEvents();
     await this._refreshQuota();
 
@@ -82,6 +123,7 @@ class OdakNotApp {
       this.notebooks = [starter];
     }
 
+    this._syncSubjectDropdown();
     this._renderNotebookTree();
     await this.openNotebook(this.notebooks[0].id);
   }
@@ -108,7 +150,15 @@ class OdakNotApp {
         this.pendingImageInsertPt = pt;
         document.getElementById("imageInsertInput").click();
       },
-      onLaserActivity: () => {}
+      onInfiniteExpand: (pageIndex, newW, newH) => {
+        const pd = this.canvasEngine.pagesData.get(pageIndex);
+        if (!pd) return;
+        pd.width = newW;
+        pd.height = newH;
+        this.pdfEngine.updatePageDimension(pageIndex, { width: newW, height: newH });
+        const slot = this.canvasEngine.slots.get(pageIndex);
+        if (slot) this.canvasEngine.registerMountedPage(pageIndex, slot, pd);
+      }
     });
 
     this.stickyManager = new StickyCardManager({
@@ -131,6 +181,7 @@ class OdakNotApp {
             stickyCards: []
           };
         }
+        this.pdfEngine.updatePageDimension(pageIndex, { width: pd.width, height: pd.height });
         this.canvasEngine.registerMountedPage(pageIndex, slot, pd);
         this.stickyManager.renderPageCards(pageIndex);
       },
@@ -217,7 +268,6 @@ class OdakNotApp {
       }
     });
 
-    // Çakışmasız Dokunmatik Jest Durum Makinesi
     new TouchGestureRecognizer({
       element: viewportEl,
       isPenBlocked: () => this.canvasEngine.isPenBlocked(),
@@ -232,6 +282,7 @@ class OdakNotApp {
         this.canvasEngine.panY = ly - (ly - this.canvasEngine.panY) * actualRatio + dy;
         this.canvasEngine.zoom = nextZoom;
         this.canvasEngine.applyWorldTransform();
+        this._updateGizmoBar(this.canvasEngine.gizmo);
         document.getElementById("zoomBadge").textContent = `%${Math.round(nextZoom * 100)}`;
       },
       onTransformEnd: () => {
@@ -240,6 +291,70 @@ class OdakNotApp {
       onUndo: () => this._triggerUndo(),
       onRedo: () => this._triggerRedo()
     });
+
+    // Masaüstü / Klavye Trackpad Tekerlek Kaydırma ve Ctrl+Tekerlek Yakınlaştırma
+    viewportEl.addEventListener(
+      "wheel",
+      (e) => {
+        e.preventDefault();
+        if (e.ctrlKey || e.metaKey) {
+          const vr = viewportEl.getBoundingClientRect();
+          const lx = e.clientX - vr.left;
+          const ly = e.clientY - vr.top;
+          const factor = e.deltaY < 0 ? 1.1 : 0.9;
+          const nextZoom = Math.max(0.35, Math.min(4.0, this.canvasEngine.zoom * factor));
+          const ratio = nextZoom / this.canvasEngine.zoom;
+          this.canvasEngine.panX = lx - (lx - this.canvasEngine.panX) * ratio;
+          this.canvasEngine.panY = ly - (ly - this.canvasEngine.panY) * ratio;
+          this.canvasEngine.zoom = nextZoom;
+          this.canvasEngine.applyWorldTransform();
+          this._updateGizmoBar(this.canvasEngine.gizmo);
+          document.getElementById("zoomBadge").textContent = `%${Math.round(nextZoom * 100)}`;
+          this.pdfEngine.scheduleHiDPIRefresh(nextZoom);
+        } else {
+          this.canvasEngine.panX -= e.deltaX;
+          this.canvasEngine.panY -= e.deltaY;
+          this.canvasEngine.applyWorldTransform();
+          this._updateGizmoBar(this.canvasEngine.gizmo);
+        }
+      },
+      { passive: false }
+    );
+
+    // Mini-Map Tıklama / Sürükleme ile Hızlı Navigasyon
+    const minimap = document.getElementById("minimapCanvas");
+    const navigateFromMinimap = (e) => {
+      const pd = this.canvasEngine.pagesData.get(this.canvasEngine.activePageIndex);
+      if (!pd) return;
+      const r = minimap.getBoundingClientRect();
+      const scale = Math.min(minimap.width / pd.width, minimap.height / pd.height);
+      const ox = (minimap.width - pd.width * scale) / 2;
+      const oy = (minimap.height - pd.height * scale) / 2;
+      const wx = Math.max(0, Math.min(pd.width, (e.clientX - r.left - ox) / scale));
+      const wy = Math.max(0, Math.min(pd.height, (e.clientY - r.top - oy) / scale));
+      this.jumpToPage(this.canvasEngine.activePageIndex, wx, wy);
+    };
+    minimap.addEventListener("pointerdown", (e) => {
+      minimap.setPointerCapture(e.pointerId);
+      navigateFromMinimap(e);
+    });
+    minimap.addEventListener("pointermove", (e) => {
+      if (e.buttons === 1) navigateFromMinimap(e);
+    });
+  }
+
+  _syncSubjectDropdown() {
+    const sel = document.getElementById("activeSubjectSelect");
+    sel.innerHTML = "";
+    for (const subj of this.subjects) {
+      const opt = document.createElement("option");
+      opt.value = subj;
+      opt.textContent = subj;
+      sel.appendChild(opt);
+    }
+    if (this.activeNotebook?.subject) {
+      sel.value = this.activeNotebook.subject;
+    }
   }
 
   async openNotebook(notebookId) {
@@ -251,6 +366,12 @@ class OdakNotApp {
     this._updateGizmoBar(null);
 
     document.getElementById("notebookTitleInput").value = nb.title;
+    if (!this.subjects.includes(nb.subject)) {
+      this.subjects.push(nb.subject || "Genel");
+      this._saveSubjects();
+    }
+    this._syncSubjectDropdown();
+
     if (nb.paperSettings) {
       this.canvasEngine.setPaperSettings(nb.paperSettings);
       document.getElementById("paperTemplateSelect").value = nb.paperSettings.template;
@@ -412,7 +533,6 @@ class OdakNotApp {
   }
 
   _bindUIEvents() {
-    // Sol Kenar Çubuğu & Sağ Panel Aç/Kapat
     document.getElementById("btnToggleSidebar").addEventListener("click", () => {
       document.getElementById("leftSidebar").classList.toggle("collapsed");
     });
@@ -423,7 +543,6 @@ class OdakNotApp {
       document.getElementById("apiKeySection").classList.toggle("hidden");
     });
 
-    // Zen Modu
     const toggleZen = () => {
       const active = document.body.classList.toggle("zen-mode");
       document.getElementById("btnExitZenFloat").classList.toggle("hidden", !active);
@@ -431,7 +550,13 @@ class OdakNotApp {
     document.getElementById("btnZenMode").addEventListener("click", toggleZen);
     document.getElementById("btnExitZenFloat").addEventListener("click", toggleZen);
 
-    // Defter Başlığı Güncelleme
+    document.getElementById("activeSubjectSelect").addEventListener("change", async (e) => {
+      if (!this.activeNotebook) return;
+      this.activeNotebook.subject = e.target.value;
+      await this.storage.saveNotebook(this.activeNotebook);
+      this._renderNotebookTree();
+    });
+
     document.getElementById("notebookTitleInput").addEventListener("change", async (e) => {
       if (!this.activeNotebook) return;
       this.activeNotebook.title = e.target.value.trim() || "İsimsiz Defter";
@@ -439,7 +564,6 @@ class OdakNotApp {
       this._renderNotebookTree();
     });
 
-    // Sol Kenar Çubuğu Sekmeleri
     document.querySelectorAll(".sidebar-tab").forEach((tab) => {
       tab.addEventListener("click", () => {
         document.querySelectorAll(".sidebar-tab").forEach((t) => t.classList.remove("active"));
@@ -449,20 +573,25 @@ class OdakNotApp {
       });
     });
 
-    // Yeni Ders, Yeni Defter, PDF İçe Aktar
     document.getElementById("btnNewSubject").addEventListener("click", () => {
       const name = prompt("Yeni ders klasörü adı:");
       if (name && name.trim()) {
-        this.subjects.push(name.trim());
+        const clean = name.trim();
+        if (!this.subjects.includes(clean)) {
+          this.subjects.push(clean);
+          this._saveSubjects();
+        }
+        this._syncSubjectDropdown();
         this._renderNotebookTree();
       }
     });
 
     document.getElementById("btnNewNotebook").addEventListener("click", async () => {
+      const targetSubj = document.getElementById("activeSubjectSelect").value || this.subjects[0] || "Genel";
       const nb = await this.storage.saveNotebook({
         id: `nb_${Date.now()}`,
         title: `Çalışma Notu ${this.notebooks.length + 1}`,
-        subject: this.subjects[0] || "Genel",
+        subject: targetSubj,
         pageCount: 1,
         pdfHash: null,
         paperSettings: { ...this.canvasEngine.paperSettings },
@@ -482,10 +611,11 @@ class OdakNotApp {
       const hash = await this.storage.storePdfBlob(file);
       const buf = await file.arrayBuffer();
       const doc = await window.pdfjsLib.getDocument({ data: buf }).promise;
+      const targetSubj = document.getElementById("activeSubjectSelect").value || this.subjects[0] || "Genel";
       const nb = await this.storage.saveNotebook({
         id: `nb_${Date.now()}`,
         title: file.name.replace(/\.pdf$/i, ""),
-        subject: this.subjects[0] || "Genel",
+        subject: targetSubj,
         pageCount: doc.numPages,
         pdfHash: hash,
         paperSettings: { template: "blank", theme: "white", layout: "a4-portrait" },
@@ -501,7 +631,6 @@ class OdakNotApp {
       this.jumpToPage(idx);
     });
 
-    // Kitap İçi Arama
     let searchTimer = null;
     document.getElementById("pdfSearchInput").addEventListener("input", (e) => {
       clearTimeout(searchTimer);
@@ -510,7 +639,6 @@ class OdakNotApp {
       }, 280);
     });
 
-    // Sessiz Odak Sayacı (15/25/45 dk)
     const updateTimerUI = () => {
       const m = String(Math.floor(this.timerSecondsLeft / 60)).padStart(2, "0");
       const s = String(this.timerSecondsLeft % 60).padStart(2, "0");
@@ -560,7 +688,6 @@ class OdakNotApp {
       updateTimerUI();
     });
 
-    // Yüzen Araç Çubuğu Sürükleme & Katlama
     const toolbar = document.getElementById("floatingToolbar");
     const grip = document.getElementById("toolbarDragHandle");
     grip.addEventListener("pointerdown", (e) => {
@@ -587,7 +714,6 @@ class OdakNotApp {
       e.target.textContent = collapsed ? "▸" : "▾";
     });
 
-    // Çizim Araç Seçimi
     document.querySelectorAll(".tool-btn[data-tool]").forEach((btn) => {
       btn.addEventListener("click", () => {
         document.querySelectorAll(".tool-btn[data-tool]").forEach((b) => b.classList.remove("active"));
@@ -607,14 +733,12 @@ class OdakNotApp {
       });
     });
 
-    // 5 Favori Renk Slotu + Tam Renk Seçici
     const colorPicker = document.getElementById("customColorPicker");
     document.querySelectorAll(".fav-color").forEach((slotBtn) => {
       slotBtn.addEventListener("click", () => {
         document.querySelectorAll(".fav-color").forEach((s) => s.classList.remove("active"));
         slotBtn.classList.add("active");
-        const rgb = getComputedStyle(slotBtn).backgroundColor;
-        this.canvasEngine.color = rgb;
+        this.canvasEngine.color = getComputedStyle(slotBtn).backgroundColor;
       });
     });
 
@@ -622,10 +746,12 @@ class OdakNotApp {
       const hex = e.target.value;
       this.canvasEngine.color = hex;
       const activeSlot = document.querySelector(".fav-color.active");
-      if (activeSlot) activeSlot.style.background = hex;
+      if (activeSlot) {
+        activeSlot.style.background = hex;
+        this._persistPalette();
+      }
     });
 
-    // 3 Hızlı Kalınlık Önayarı
     document.querySelectorAll(".size-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
         document.querySelectorAll(".size-btn").forEach((b) => b.classList.remove("active"));
@@ -637,13 +763,11 @@ class OdakNotApp {
     document.getElementById("btnUndo").addEventListener("click", () => this._triggerUndo());
     document.getElementById("btnRedo").addEventListener("click", () => this._triggerRedo());
 
-    // Son Yazılan Yere Dön
     document.getElementById("btnJumpLastStroke").addEventListener("click", () => {
       const loc = this.canvasEngine.lastWrittenLocation;
       this.jumpToPage(loc.pageIndex, loc.x, loc.y);
     });
 
-    // Gizmo Mini Eylem Çubuğu
     document.getElementById("gizmoColorInput").addEventListener("input", (e) => {
       const g = this.canvasEngine.gizmo;
       if (!g.active) return;
@@ -700,7 +824,6 @@ class OdakNotApp {
       }
     });
 
-    // PDF Metin Seçimi Yüzen Menü (180ms Debounce + Otomatik Fosforlu Vurgulama)
     let selTimer = null;
     const selMenu = document.getElementById("textSelectMenu");
     document.addEventListener("selectionchange", () => {
@@ -746,7 +869,6 @@ class OdakNotApp {
       selMenu.classList.add("hidden");
     });
 
-    // Seçili Metni Tek Komutla Vektör Fosforlu Çizgiye Dönüştür
     document.querySelectorAll(".hl-dot").forEach((dot) => {
       dot.addEventListener("click", () => {
         const sel = window.getSelection();
@@ -800,7 +922,6 @@ class OdakNotApp {
       });
     });
 
-    // Kağıt Ayarları Modalı
     document.getElementById("btnPaperSettings").addEventListener("click", () => {
       document.getElementById("paperModal").classList.remove("hidden");
     });
@@ -829,7 +950,6 @@ class OdakNotApp {
       document.getElementById("paperModal").classList.add("hidden");
     });
 
-    // Çalışma Özeti Modalı
     let activeGuideFilter = "all";
     const renderGuideItems = () => {
       const listEl = document.getElementById("studyGuideList");
@@ -880,7 +1000,6 @@ class OdakNotApp {
       this.studyGuide.onGenerateQuizWithAi(this.studyGuide.toMarkdown(activeGuideFilter));
     });
 
-    // PDF Dışa Aktarma & Yedekleme Modalı
     document.getElementById("btnExportPdf").addEventListener("click", async () => {
       await exportFlattenedPDF({
         notebookTitle: this.activeNotebook?.title,
@@ -921,7 +1040,6 @@ class OdakNotApp {
       e.target.value = "";
     });
 
-    // Metin Kutusu ve Görsel Ekleme
     document.getElementById("btnConfirmTextBox").addEventListener("click", () => {
       const text = document.getElementById("textBoxInput").value.trim();
       const pt = this.pendingTextInsertPt;
@@ -964,7 +1082,6 @@ class OdakNotApp {
       e.target.value = "";
     });
 
-    // Modal Kapatma Butonları
     document.querySelectorAll(".close-modal").forEach((btn) => {
       btn.addEventListener("click", () => {
         document.getElementById(btn.dataset.close).classList.add("hidden");
