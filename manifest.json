@@ -1,0 +1,22 @@
+{
+  "name": "Odak Not — S Pen El Yazısı ve Akıllı Çalışma Stüdyosu",
+  "short_name": "Odak Not",
+  "description": "Tablet ve S Pen için sıfır gecikmeli el yazısı, sanal kaydırmalı PDF ve Gemini/KaTeX çalışma asistanı.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#eef2f6",
+  "theme_color": "#1e293b",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='36' fill='%232563eb'/%3E%3Cpath d='M52 136l14-42 64-64 28 28-64 64-42 14z' fill='%23ffffff'/%3E%3C/svg%3E",
+      "sizes": "192x192",
+      "type": "image/svg+xml"
+    },
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='96' fill='%232563eb'/%3E%3Cpath d='M138 364l38-112 170-170 74 74-170 170-112 38z' fill='%23ffffff'/%3E%3C/svg%3E",
+      "sizes": "512x512",
+      "type": "image/svg+xml"
+    }
+  ]
+}
