@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="theme-color" content="#1e293b" />
   <title>Odak Not — S Pen El Yazısı ve Akıllı Çalışma Stüdyosu</title>
+  <link rel="manifest" href="manifest.json" />
 
   <!-- KaTeX Matematik Formül Desteği -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css" crossorigin="anonymous" />
@@ -31,6 +32,7 @@
     <div class="top-left">
       <button id="btnToggleSidebar" class="icon-btn" title="Kenar Çubuğunu Aç/Kapat" aria-label="Kenar Çubuğu">☰</button>
       <div class="brand-badge">Odak Not</div>
+      <select id="activeSubjectSelect" class="subject-select" title="Aktif Defterin Ders Klasörü"></select>
       <input id="notebookTitleInput" type="text" class="notebook-title-input" value="Yeni Çalışma Defteri" title="Defter Başlığını Düzenle" />
       <span id="saveStatus" class="save-status saved" title="Otomatik Kayıt Durumu">● Kaydedildi</span>
     </div>
@@ -128,7 +130,7 @@
           <div class="tool-group">
             <button class="tool-btn active" data-tool="ballpoint" title="Tükenmez Kalem (Sabit Akış)">🖊️</button>
             <button class="tool-btn" data-tool="fountain" title="Dolma Kalem (Basınç ve Hız Duyarlı)">✒️</button>
-            <button class="tool-btn" data-tool="pencil" title="Kurşun Kalem (Dokulu)">✏️</button>
+            <button class="tool-btn" data-tool="pencil" title="Kurşun Kalem (Dokulu Grafit)">✏️</button>
             <button class="tool-btn" data-tool="highlighter" title="Fosforlu Kalem (Multiply + Düz Hizalama)">🖍️</button>
             <button class="tool-btn" data-tool="laser" title="Lazer İşaretçi (1.5 sn Sonra Kaybolur)">🔴</button>
             <button class="tool-btn" data-tool="eraser" title="Silgi (S Pen Yan Tuşu ile Anında Geçiş)">🧽</button>
@@ -140,7 +142,7 @@
 
           <!-- Silgi Alt Modları -->
           <div id="eraserModeBar" class="sub-tool-group hidden">
-            <button class="sub-btn active" data-eraser="partial" title="Kısmi (Piksel/Segment) Silgi">Kısmi</button>
+            <button class="sub-btn active" data-eraser="partial" title="Kısmi (Segment Bölücü) Silgi">Kısmi</button>
             <button class="sub-btn" data-eraser="vector" title="Vektör (Tüm Çizgi) Silgisi">Vektör</button>
             <button class="sub-btn" data-eraser="highlighter-only" title="Sadece Fosforlu Kalemi Sil">Sadece Fosforlu</button>
           </div>
@@ -149,7 +151,7 @@
 
           <!-- 5 Favori Renk + Tam Seçici -->
           <div class="tool-group colors-group">
-            <button class="fav-color active" data-slot="0" style="background:#0f172a" title="Favori Renk 1 (Çift tıkla özelleştir)"></button>
+            <button class="fav-color active" data-slot="0" style="background:#0f172a" title="Favori Renk 1"></button>
             <button class="fav-color" data-slot="1" style="background:#2563eb" title="Favori Renk 2"></button>
             <button class="fav-color" data-slot="2" style="background:#dc2626" title="Favori Renk 3"></button>
             <button class="fav-color" data-slot="3" style="background:#16a34a" title="Favori Renk 4"></button>
@@ -203,7 +205,7 @@
 
       <!-- Köşe Mini-Map ve Son Yazılan Yere Dön -->
       <div id="minimapWrapper" class="minimap-wrapper">
-        <canvas id="minimapCanvas" width="136" height="176" title="Sayfa Mini Haritası"></canvas>
+        <canvas id="minimapCanvas" width="136" height="176" title="Tıklayarak veya Sürükleyerek Sayfada Gezin"></canvas>
         <div class="minimap-controls">
           <span id="zoomBadge" class="zoom-badge">%100</span>
           <button id="btnJumpLastStroke" class="jump-btn" title="Son Kalem Darbesinin Olduğu Yere Odaklan">🎯 Son Yazılan Yer</button>
