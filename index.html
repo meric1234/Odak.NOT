@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#1e293b" />
+  <title>Odak Not — S Pen El Yazısı ve Akıllı Çalışma Stüdyosu</title>
+
+  <!-- KaTeX Matematik Formül Desteği -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css" crossorigin="anonymous" />
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js" crossorigin="anonymous"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js" crossorigin="anonymous"></script>
+
+  <!-- PDF.js (Virtual Scroll & Metin Katmanı) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" crossorigin="anonymous"></script>
+  <script>
+    if (window.pdfjsLib) {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+    }
+  </script>
+
+  <!-- jsPDF (Birleştirilmiş PDF Dışa Aktarma) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" crossorigin="anonymous"></script>
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- Üst Durum Çubuğu -->
+  <header id="topBar" class="top-bar">
+    <div class="top-left">
+      <button id="btnToggleSidebar" class="icon-btn" title="Kenar Çubuğunu Aç/Kapat" aria-label="Kenar Çubuğu">☰</button>
+      <div class="brand-badge">Odak Not</div>
+      <input id="notebookTitleInput" type="text" class="notebook-title-input" value="Yeni Çalışma Defteri" title="Defter Başlığını Düzenle" />
+      <span id="saveStatus" class="save-status saved" title="Otomatik Kayıt Durumu">● Kaydedildi</span>
+    </div>
+
+    <div class="top-center">
+      <div class="focus-timer-box" title="Sessiz Odak Sayacı">
+        <div class="timer-presets" id="timerPresets">
+          <button data-min="15" class="preset-btn">15dk</button>
+          <button data-min="25" class="preset-btn active">25dk</button>
+          <button data-min="45" class="preset-btn">45dk</button>
+        </div>
+        <span id="timerDisplay" class="timer-display">25:00</span>
+        <button id="btnTimerToggle" class="icon-btn small" title="Sayacı Başlat / Duraklat">▶</button>
+        <button id="btnTimerReset" class="icon-btn small" title="Sayacı Sıfırla">↺</button>
+      </div>
+    </div>
+
+    <div class="top-right">
+      <button id="btnStudySummary" class="action-btn accent" title="Vurgular ve Yapışkan Kartlardan Çalışma Özeti Oluştur">📑 Çalışma Özeti</button>
+      <button id="btnExportPdf" class="action-btn" title="Notları ve PDF'i Birleştirip Dışa Aktar">⬇ PDF Aktar</button>
+      <button id="btnBackupModal" class="action-btn" title="Depolama Kotası ve .odaknot Yedekleme">💾 Yedek</button>
+      <button id="btnZenMode" class="action-btn zen" title="Dikkat Dağıtıcıları Gizle (Zen Modu)">🧘 Zen Modu</button>
+      <button id="btnToggleAiPanel" class="action-btn ai-toggle" title="Gemini Çalışma Asistanını Aç/Kapat">✨ Asistan</button>
+    </div>
+  </header>
+
+  <div id="appShell" class="app-shell">
+    <!-- Sol Kenar Çubuğu -->
+    <aside id="leftSidebar" class="left-sidebar">
+      <nav class="sidebar-tabs" role="tablist">
+        <button id="tabNotebooks" class="sidebar-tab active" data-tab="panelNotebooks" title="Dersler ve Defterler">📚 Dersler</button>
+        <button id="tabPages" class="sidebar-tab" data-tab="panelPages" title="Sayfa Önizlemeleri">🗂 Sayfalar</button>
+        <button id="tabOutline" class="sidebar-tab" data-tab="panelOutline" title="PDF İçindekiler Ağacı">🧭 İçindekiler</button>
+        <button id="tabSearch" class="sidebar-tab" data-tab="panelSearch" title="Kitap İçi Metin Arama">🔍 Ara</button>
+      </nav>
+
+      <!-- Dersler & Not Listesi -->
+      <section id="panelNotebooks" class="sidebar-panel active">
+        <div class="panel-actions">
+          <button id="btnNewSubject" class="mini-btn" title="Yeni Ders Klasörü Ekle">+ Ders</button>
+          <button id="btnNewNotebook" class="mini-btn primary" title="Yeni Boş Defter Oluştur">+ Defter</button>
+          <button id="btnImportPdf" class="mini-btn" title="PDF Dosyası İçe Aktar">📄 PDF Aç</button>
+          <input id="pdfFileInput" type="file" accept="application/pdf" hidden />
+        </div>
+        <div id="subjectTree" class="subject-tree"></div>
+        <div class="storage-footer">
+          <div class="quota-header">
+            <span>IndexedDB Depolama</span>
+            <span id="storageQuotaText">Hesaplanıyor...</span>
+          </div>
+          <div class="quota-track"><div id="storageQuotaBar" class="quota-fill"></div></div>
+        </div>
+      </section>
+
+      <!-- Sayfa Küçük Resimleri -->
+      <section id="panelPages" class="sidebar-panel">
+        <div class="panel-actions">
+          <button id="btnAddPage" class="mini-btn primary full" title="Deftere Yeni Sayfa Ekle">+ Yeni Sayfa Ekle</button>
+        </div>
+        <div id="thumbnailList" class="thumbnail-list"></div>
+      </section>
+
+      <!-- PDF İçindekiler -->
+      <section id="panelOutline" class="sidebar-panel">
+        <div id="outlineTree" class="outline-tree">
+          <p class="muted-empty">Açık PDF belgesinde içindekiler tablosu bulunmuyor.</p>
+        </div>
+      </section>
+
+      <!-- Hızlı Metin Arama -->
+      <section id="panelSearch" class="sidebar-panel">
+        <div class="search-box-wrap">
+          <input id="pdfSearchInput" type="search" placeholder="Kitap içinde kelime ara..." />
+          <div id="pdfSearchStatus" class="search-status">Arama hazır</div>
+        </div>
+        <div id="pdfSearchResults" class="search-results"></div>
+      </section>
+    </aside>
+
+    <!-- Ana Çizim ve PDF Tuval Alanı -->
+    <main id="workspace" class="workspace">
+      <div id="viewport" class="viewport">
+        <div id="worldContainer" class="world-container">
+          <div id="pagesLayer" class="pages-layer"></div>
+        </div>
+        <canvas id="overlayCanvas" class="overlay-canvas"></canvas>
+      </div>
+
+      <!-- Yüzen Sürüklenebilir/Katlanabilir Araç Çubuğu -->
+      <div id="floatingToolbar" class="floating-toolbar" role="toolbar" aria-label="Çizim Araçları">
+        <div id="toolbarDragHandle" class="toolbar-grip" title="Araç Çubuğunu Sürükle">⋮⋮</div>
+        <button id="btnCollapseToolbar" class="tool-btn collapse-btn" title="Araç Çubuğunu Katla/Aç">▾</button>
+
+        <div class="toolbar-body" id="toolbarBody">
+          <div class="tool-group">
+            <button class="tool-btn active" data-tool="ballpoint" title="Tükenmez Kalem (Sabit Akış)">🖊️</button>
+            <button class="tool-btn" data-tool="fountain" title="Dolma Kalem (Basınç ve Hız Duyarlı)">✒️</button>
+            <button class="tool-btn" data-tool="pencil" title="Kurşun Kalem (Dokulu)">✏️</button>
+            <button class="tool-btn" data-tool="highlighter" title="Fosforlu Kalem (Multiply + Düz Hizalama)">🖍️</button>
+            <button class="tool-btn" data-tool="laser" title="Lazer İşaretçi (1.5 sn Sonra Kaybolur)">🔴</button>
+            <button class="tool-btn" data-tool="eraser" title="Silgi (S Pen Yan Tuşu ile Anında Geçiş)">🧽</button>
+            <button class="tool-btn" data-tool="lasso" title="Kement Seçimi (Taşı, Ölçekle, Döndür, Gemini)">🪢</button>
+            <button class="tool-btn" data-tool="text" title="Metin Kutusu Ekle">🔤</button>
+            <button class="tool-btn" data-tool="image" title="Görsel Ekle">🖼️</button>
+            <button class="tool-btn" data-tool="textselect" title="PDF Metin Seçimi ve Otomatik Vurgu">🖱️</button>
+          </div>
+
+          <!-- Silgi Alt Modları -->
+          <div id="eraserModeBar" class="sub-tool-group hidden">
+            <button class="sub-btn active" data-eraser="partial" title="Kısmi (Piksel/Segment) Silgi">Kısmi</button>
+            <button class="sub-btn" data-eraser="vector" title="Vektör (Tüm Çizgi) Silgisi">Vektör</button>
+            <button class="sub-btn" data-eraser="highlighter-only" title="Sadece Fosforlu Kalemi Sil">Sadece Fosforlu</button>
+          </div>
+
+          <div class="toolbar-divider"></div>
+
+          <!-- 5 Favori Renk + Tam Seçici -->
+          <div class="tool-group colors-group">
+            <button class="fav-color active" data-slot="0" style="background:#0f172a" title="Favori Renk 1 (Çift tıkla özelleştir)"></button>
+            <button class="fav-color" data-slot="1" style="background:#2563eb" title="Favori Renk 2"></button>
+            <button class="fav-color" data-slot="2" style="background:#dc2626" title="Favori Renk 3"></button>
+            <button class="fav-color" data-slot="3" style="background:#16a34a" title="Favori Renk 4"></button>
+            <button class="fav-color" data-slot="4" style="background:#facc15" title="Favori Renk 5"></button>
+            <input id="customColorPicker" type="color" value="#0f172a" title="Tam Renk Seçici (Aktif Slota Kaydeder)" />
+          </div>
+
+          <div class="toolbar-divider"></div>
+
+          <!-- 3 Hızlı Uç Kalınlığı -->
+          <div class="tool-group sizes-group">
+            <button class="size-btn" data-size="1.8" title="İnce Uç (1.8px)"><span class="dot s1"></span></button>
+            <button class="size-btn active" data-size="3.2" title="Orta Uç (3.2px)"><span class="dot s2"></span></button>
+            <button class="size-btn" data-size="6.5" title="Kalın Uç (6.5px)"><span class="dot s3"></span></button>
+          </div>
+
+          <div class="toolbar-divider"></div>
+
+          <!-- Undo / Redo & Kağıt Ayarları -->
+          <div class="tool-group">
+            <button id="btnUndo" class="tool-btn" title="Geri Al (2 Parmak Dokunuş)">↩️</button>
+            <button id="btnRedo" class="tool-btn" title="İleri Al (3 Parmak Dokunuş)">↪️</button>
+            <button id="btnPaperSettings" class="tool-btn" title="Sayfa Şablonu, Tema ve Düzen Ayarları">📐</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Kement Seçimi Gizmo Alt Eylem Çubuğu -->
+      <div id="gizmoBar" class="floating-action-bar hidden">
+        <label class="gizmo-color-label" title="Seçili Çizgilerin Rengini Değiştir">
+          🎨 <input id="gizmoColorInput" type="color" value="#2563eb" />
+        </label>
+        <button id="btnGizmoDuplicate" title="Seçimi Çoğalt">📋 Çoğalt</button>
+        <button id="btnGizmoDelete" class="danger" title="Seçimi Sil">🗑️ Sil</button>
+        <button id="btnGizmoAskAi" class="primary" title="Seçili Alanı Yüksek Çözünürlükle Gemini'ye Gönder">✨ Gemini'ye Gönder</button>
+      </div>
+
+      <!-- PDF Metin Seçimi Yüzen Menüsü -->
+      <div id="textSelectMenu" class="floating-action-bar text-select-menu hidden">
+        <button id="btnSelTranslate" title="Seçili Metni Türkçeye Çevir">🌐 Türkçeye Çevir</button>
+        <button id="btnSelSummarize" title="Seçili Metni Özetle">📝 Özetle</button>
+        <button id="btnSelExplain" title="LaTeX Formülleriyle Detaylı Açıkla">∑ Açıkla (LaTeX)</button>
+        <button id="btnSelCopy" title="Panoya Kopyala">📋 Kopyala</button>
+        <div class="hl-dots">
+          <button class="hl-dot" data-color="rgba(250, 204, 21, 0.45)" style="background:#facc15" title="Sarı Vurgula"></button>
+          <button class="hl-dot" data-color="rgba(74, 222, 128, 0.45)" style="background:#4ade80" title="Yeşil Vurgula"></button>
+          <button class="hl-dot" data-color="rgba(244, 114, 182, 0.45)" style="background:#f472b6" title="Pembe Vurgula"></button>
+          <button class="hl-dot" data-color="rgba(56, 189, 248, 0.45)" style="background:#38bdf8" title="Mavi Vurgula"></button>
+        </div>
+      </div>
+
+      <!-- Köşe Mini-Map ve Son Yazılan Yere Dön -->
+      <div id="minimapWrapper" class="minimap-wrapper">
+        <canvas id="minimapCanvas" width="136" height="176" title="Sayfa Mini Haritası"></canvas>
+        <div class="minimap-controls">
+          <span id="zoomBadge" class="zoom-badge">%100</span>
+          <button id="btnJumpLastStroke" class="jump-btn" title="Son Kalem Darbesinin Olduğu Yere Odaklan">🎯 Son Yazılan Yer</button>
+        </div>
+      </div>
+
+      <!-- Zen Modundan Çıkış Hapı -->
+      <button id="btnExitZenFloat" class="exit-zen-float hidden" title="Zen Modundan Çık">🧘 Zen Modundan Çık</button>
+    </main>
+
+    <!-- Sağ Panel: Gemini + KaTeX Çalışma Asistanı -->
+    <aside id="aiPanel" class="ai-panel">
+      <div class="ai-header">
+        <h3>✨ Gemini Çalışma Asistanı</h3>
+        <button id="btnToggleKeyBox" class="icon-btn small" title="Gemini API Anahtarı Ayarları">🔑</button>
+      </div>
+
+      <div id="apiKeySection" class="api-key-box">
+        <label for="geminiApiKeyInput">Gemini API Anahtarı (Tarayıcıda Saklanır)</label>
+        <div class="key-row">
+          <input id="geminiApiKeyInput" type="password" placeholder="AIzaSy..." autocomplete="off" />
+          <button id="btnSaveApiKey" class="mini-btn primary">Kaydet</button>
+        </div>
+        <small id="apiKeyStatus" class="key-status">Anahtar yalnızca cihazınızdaki localStorage içinde tutulur.</small>
+      </div>
+
+      <div id="aiChatMessages" class="ai-messages">
+        <div class="ai-msg assistant">
+          <div class="msg-body">
+            Merhaba! Kement aracıyla seçtiğin el yazısı/PDF bölgesini gönderebilir, metin seçip özetletebilir veya doğrudan soru sorabilirsin. Yanıtları <strong>Tuvale Sabitle</strong> ile çalışma sayfanın yanına yapıştırabilirsin.
+          </div>
+        </div>
+      </div>
+
+      <div id="aiAttachmentPreview" class="ai-attachment hidden">
+        <img id="aiAttachmentImg" alt="Seçili Tuval Kırpıntısı" />
+        <button id="btnClearAttachment" title="Eklenen Görseli Kaldır">✕</button>
+      </div>
+
+      <div class="ai-input-area">
+        <textarea id="aiPromptInput" rows="2" placeholder="Soru sor veya formül çözümü iste... (Ctrl+Enter)"></textarea>
+        <button id="btnSendAi" class="send-ai-btn" title="Gemini'ye Gönder">Gönder ➤</button>
+      </div>
+    </aside>
+  </div>
+
+  <!-- Sayfa & Kağıt Özelleştirme Modalı -->
+  <div id="paperModal" class="modal-backdrop hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>📐 Sayfa ve Kağıt Özelleştirme</h3>
+        <button class="close-modal" data-close="paperModal">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="field-label">Kağıt Şablonu</label>
+        <select id="paperTemplateSelect" class="modal-select">
+          <option value="blank">Düz Kağıt</option>
+          <option value="ruled-narrow">Çizgili (Dar — 24px)</option>
+          <option value="ruled-medium" selected>Çizgili (Orta — 34px)</option>
+          <option value="ruled-wide">Çizgili (Geniş — 46px)</option>
+          <option value="grid">Kareli / Milimetrik</option>
+          <option value="dot">Noktalı (Dot Grid)</option>
+          <option value="cornell">Cornell Not Şablonu</option>
+        </select>
+
+        <label class="field-label">Kağıt Teması</label>
+        <select id="paperThemeSelect" class="modal-select">
+          <option value="white">Beyaz Kağıt</option>
+          <option value="cream" selected>Krem (Göz Yormayan)</option>
+          <option value="dark">Koyu Antrasit</option>
+        </select>
+
+        <label class="field-label">Sayfa Düzeni</label>
+        <select id="paperLayoutSelect" class="modal-select">
+          <option value="a4-portrait" selected>A4 Dikey (Sayfalı Mod)</option>
+          <option value="a4-landscape">A4 Yatay (Sayfalı Mod)</option>
+          <option value="infinite">Sınırsız Tuval (Infinite Canvas)</option>
+        </select>
+      </div>
+      <div class="modal-footer">
+        <button id="btnApplyPaper" class="action-btn accent">Uygula</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Çalışma Özeti (Study Guide) Modalı -->
+  <div id="studyGuideModal" class="modal-backdrop hidden">
+    <div class="modal-card large">
+      <div class="modal-header">
+        <h3>📑 Akıllı Çalışma Özeti ve Vurgu Derleyici</h3>
+        <button class="close-modal" data-close="studyGuideModal">✕</button>
+      </div>
+      <div class="guide-toolbar">
+        <div class="filter-pills" id="guideFilterPills">
+          <button class="pill active" data-filter="all">Tümü</button>
+          <button class="pill" data-filter="sticky">📌 Yapışkan Kartlar</button>
+          <button class="pill" data-filter="yellow">🟡 Sarı Vurgu</button>
+          <button class="pill" data-filter="green">🟢 Yeşil Vurgu</button>
+          <button class="pill" data-filter="pink">🩷 Pembe Vurgu</button>
+          <button class="pill" data-filter="blue">🔵 Mavi Vurgu</button>
+        </div>
+        <div class="guide-actions">
+          <button id="btnCopyGuideMd" class="mini-btn">📋 Markdown Kopyala</button>
+          <button id="btnInsertGuidePage" class="mini-btn primary">➕ Deftere Özet Sayfası Ekle</button>
+          <button id="btnGenerateQuiz" class="mini-btn accent">🧠 Gemini ile Sınav Sorusu Üret</button>
+        </div>
+      </div>
+      <div id="studyGuideList" class="guide-list"></div>
+    </div>
+  </div>
+
+  <!-- Yedekleme ve Depolama Modalı -->
+  <div id="backupModal" class="modal-backdrop hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>💾 Depolama Yönetimi ve .odaknot Yedek</h3>
+        <button class="close-modal" data-close="backupModal">✕</button>
+      </div>
+      <div class="modal-body">
+        <p id="storageDetails" class="storage-details">Depolama bilgileri yükleniyor...</p>
+        <div class="backup-actions">
+          <button id="btnCleanOrphans" class="action-btn">🧹 Sahipsiz PDF'leri Temizle</button>
+          <button id="btnExportBackup" class="action-btn accent">⬇ Tüm Veriyi .odaknot Olarak İndir</button>
+          <label class="action-btn file-label">
+            ⬆ .odaknot Yedeğinden Geri Yükle
+            <input id="backupFileInput" type="file" accept=".odaknot,application/json" hidden />
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Metin Kutusu Ekleme Modalı -->
+  <div id="textBoxModal" class="modal-backdrop hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>🔤 Tuvale Metin Kutusu Ekle</h3>
+        <button class="close-modal" data-close="textBoxModal">✕</button>
+      </div>
+      <div class="modal-body">
+        <textarea id="textBoxInput" rows="4" class="modal-textarea" placeholder="Not metnini yazın..."></textarea>
+        <div class="row-inline">
+          <label>Yazı Boyutu: <input id="textBoxSize" type="number" value="18" min="10" max="72" /></label>
+          <label>Renk: <input id="textBoxColor" type="color" value="#0f172a" /></label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btnConfirmTextBox" class="action-btn accent">Tuvale Yerleştir</button>
+      </div>
+    </div>
+  </div>
+
+  <input id="imageInsertInput" type="file" accept="image/*" hidden />
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
