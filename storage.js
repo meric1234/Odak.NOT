@@ -103,9 +103,7 @@ export class StorageManager {
     if (navigator.storage && navigator.storage.persist) {
       try {
         await navigator.storage.persist();
-      } catch (_) {
-        // Sessizce yoksay
-      }
+      } catch (_) {}
     }
   }
 
@@ -186,6 +184,14 @@ export class StorageManager {
       });
     }
 
+    const serializedImages = (pageData.images || []).map((im) => ({
+      x: im.x,
+      y: im.y,
+      w: im.w,
+      h: im.h,
+      dataUrl: im.dataUrl
+    }));
+
     const record = {
       notebookId,
       pageIndex,
@@ -193,7 +199,7 @@ export class StorageManager {
       height: pageData.height,
       strokes: serializedStrokes,
       texts: pageData.texts || [],
-      images: pageData.images || [],
+      images: serializedImages,
       stickyCards: pageData.stickyCards || [],
       updatedAt: Date.now()
     };
@@ -219,6 +225,13 @@ export class StorageManager {
         deleted: false
       });
     }
+
+    const images = (rec.images || []).map((im) => {
+      const imgEl = new Image();
+      imgEl.src = im.dataUrl;
+      return { ...im, _el: imgEl };
+    });
+
     return {
       notebookId: rec.notebookId,
       pageIndex: rec.pageIndex,
@@ -226,18 +239,9 @@ export class StorageManager {
       height: rec.height,
       strokes,
       texts: rec.texts || [],
-      images: rec.images || [],
+      images,
       stickyCards: rec.stickyCards || []
     };
-  }
-
-  async loadAllPagesForNotebook(notebookId, pageCount) {
-    const pages = [];
-    for (let i = 0; i < pageCount; i++) {
-      const p = await this.loadPage(notebookId, i);
-      pages.push(p);
-    }
-    return pages;
   }
 
   // Thumbnail Önbelleği
