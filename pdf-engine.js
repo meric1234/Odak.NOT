@@ -10,8 +10,8 @@ export class VirtualPDFEngine {
     this.pdfDoc = null;
     this.pdfHash = null;
     this.pageCount = 0;
-    this.pageMetrics = []; // { width, height }
-    this.mountedPages = new Map(); // pageIndex -> { wrapper, pdfCanvas, textLayer, highlightLayer, renderTask, renderedScale }
+    this.pageMetrics = [];
+    this.mountedPages = new Map();
     this.observer = null;
     this.currentZoom = 1;
     this.zoomDebounceTimer = null;
@@ -52,6 +52,17 @@ export class VirtualPDFEngine {
     this.pagesLayerEl.appendChild(div);
     if (this.observer) this.observer.observe(div);
     return idx;
+  }
+
+  updatePageDimension(pageIndex, dims) {
+    if (this.pageMetrics[pageIndex]) {
+      this.pageMetrics[pageIndex] = { ...dims };
+    }
+    const wrapper = this.pagesLayerEl.querySelector(`.page-wrapper[data-page-index="${pageIndex}"]`);
+    if (wrapper) {
+      wrapper.style.width = `${dims.width}px`;
+      wrapper.style.height = `${dims.height}px`;
+    }
   }
 
   updateAllPageDimensions(dims) {
@@ -163,7 +174,6 @@ export class VirtualPDFEngine {
       slot.renderTask = null;
     }
 
-    // GPU belleğini sıfırla
     slot.pdfCanvas.width = 0;
     slot.pdfCanvas.height = 0;
     slot.paperCanvas.width = 0;
@@ -206,7 +216,6 @@ export class VirtualPDFEngine {
       await task.promise;
       slot.renderedScale = targetScale;
 
-      // Metin Katmanı Oluşturma
       slot.textLayer.innerHTML = "";
       slot.textLayer.style.setProperty("--scale-factor", "1");
       const textContent = await page.getTextContent();
@@ -237,7 +246,6 @@ export class VirtualPDFEngine {
     }, 180);
   }
 
-  // Kırpma (2.5x) için doğrudan PDF dilimi çizimi
   async renderPdfRegionToContext(pageIndex, cropRect, targetCtx, scale = 2.5) {
     if (!this.pdfDoc) return;
     const page = await this.pdfDoc.getPage(pageIndex + 1);
@@ -441,14 +449,11 @@ export class PDFOutlineAndSearch {
 
     this.pdfDoc = null;
     this.pdfHash = null;
-    this.indexing = false;
-    this.indexedPages = 0;
   }
 
   async loadOutline(pdfDoc, pdfHash) {
     this.pdfDoc = pdfDoc;
     this.pdfHash = pdfHash;
-    this.indexedPages = 0;
     this.resultsEl.innerHTML = "";
     this.statusEl.textContent = pdfDoc ? "Arama hazır" : "PDF yüklü değil";
 
@@ -499,9 +504,11 @@ export class PDFOutlineAndSearch {
   }
 
   async ensurePageIndexed(pageIndex) {
-    if (!this.pdfDoc || !this.pdfHash) return [];
-    const cached = await this.storage.getPdfPageText(this.pdfHash, pageIndex);
-    if (cached) return cached;
+    if (!this.pdfDoc) return [];
+    if (this.pdfHash) {
+      const cached = await this.storage.getPdfPageText(this.pdfHash, pageIndex);
+      if (cached) return cached;
+    }
 
     const page = await this.pdfDoc.getPage(pageIndex + 1);
     const vp = page.getViewport({ scale: 1 });
@@ -517,7 +524,9 @@ export class PDFOutlineAndSearch {
         h: fontHeight * 1.2
       };
     });
-    await this.storage.savePdfPageText(this.pdfHash, pageIndex, items);
+    if (this.pdfHash) {
+      await this.storage.savePdfPageText(this.pdfHash, pageIndex, items);
+    }
     return items;
   }
 
@@ -533,7 +542,6 @@ export class PDFOutlineAndSearch {
     let totalHits = 0;
 
     for (let start = 0; start < total; start += 5) {
-      // S Pen aktifse kısa bekleme ile öncelik ver
       while (this.isPenActive()) {
         await new Promise((r) => setTimeout(r, 120));
       }
