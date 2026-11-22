@@ -70,6 +70,17 @@ button, input, select, textarea {
   white-space: nowrap;
 }
 
+.subject-select {
+  border: 1px solid var(--border);
+  background: var(--bg-subtle);
+  color: var(--text-main);
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 4px 7px;
+  border-radius: 6px;
+  max-width: 120px;
+}
+
 .notebook-title-input {
   border: 1px solid transparent;
   background: transparent;
@@ -78,7 +89,7 @@ button, input, select, textarea {
   color: var(--text-main);
   padding: 4px 8px;
   border-radius: 6px;
-  width: 190px;
+  width: 175px;
 }
 
 .notebook-title-input:focus {
@@ -430,12 +441,6 @@ button, input, select, textarea {
   background: var(--bg-subtle);
 }
 
-.search-result-item mark {
-  background: #fef08a;
-  padding: 0 2px;
-  border-radius: 2px;
-}
-
 /* Ana Tuval Alanı */
 .workspace {
   flex: 1;
@@ -765,6 +770,7 @@ button, input, select, textarea {
   border-radius: 6px;
   background: #f8fafc;
   display: block;
+  cursor: crosshair;
 }
 
 .minimap-controls {
@@ -1086,6 +1092,14 @@ body.zen-mode .app-shell {
   border-top: 1px solid var(--border);
   display: flex;
   justify-content: flex-end;
+}
+
+.row-inline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
 }
 
 .field-label {
